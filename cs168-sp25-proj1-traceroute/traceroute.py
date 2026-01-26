@@ -38,7 +38,19 @@ class IPv4:
     dst: str
 
     def __init__(self, buffer: bytes):
-        pass  # TODO
+        b = ''.join(format(byte, '08b') for byte in [*buffer])
+        self.version = int(b[0:4], 2)
+        self.header_len = int(b[4:8], 2) * 4
+        self.tos = int(b[8:16], 2)
+        self.length = int(b[16:32], 2)
+        self.id = int(b[32:48], 2)
+        self.flags = int(b[48:51], 2)
+        self.frag_offset = int(b[51:64], 2)
+        self.ttl = int(b[64:72], 2)
+        self.proto = int(b[72:80], 2)
+        self.cksum = int(b[80:96], 2)
+        self.src = '.'.join(str(int(b[i:i+8], 2)) for i in range(96, 128, 8))
+        self.dst = '.'.join(str(int(b[i:i+8], 2)) for i in range(128, 160, 8))
 
     def __str__(self) -> str:
         return f"IPv{self.version} (tos 0x{self.tos:x}, ttl {self.ttl}, " + \
@@ -108,9 +120,14 @@ def traceroute(sendsock: util.Socket, recvsock: util.Socket, ip: str) \
     """
 
     # TODO Add your implementation
-    for ttl in range(1, TRACEROUTE_MAX_TTL+1):
-        util.print_result([], ttl)
-    return []
+    # for ttl in range(1, TRACEROUTE_MAX_TTL+1):
+    #     util.print_result([], ttl)
+    # return []
+    sendsock.set_ttl(30)
+    sendsock.sendto("Potato".encode(), (ip, TRACEROUTE_PORT_NUMBER))
+    if recvsock.recv_select():
+        buf, address = recvsock.recvfrom()
+        print(f"Packet bytes: {buf.hex()}")
 
 
 if __name__ == '__main__':
