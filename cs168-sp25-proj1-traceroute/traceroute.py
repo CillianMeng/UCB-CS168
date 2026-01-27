@@ -72,7 +72,10 @@ class ICMP:
     cksum: int
 
     def __init__(self, buffer: bytes):
-        pass  # TODO
+        b = ''.join(format(byte, '08b') for byte in [*buffer])
+        self.type = int(b[0:8], 2)
+        self.code = int(b[8:16], 2)
+        self.cksum = int(b[16:32], 2)
 
     def __str__(self) -> str:
         return f"ICMP (type {self.type}, code {self.code}, " + \
@@ -91,7 +94,11 @@ class UDP:
     cksum: int
 
     def __init__(self, buffer: bytes):
-        pass  # TODO
+        b = ''.join(format(byte, '08b') for byte in [*buffer])
+        self.src_port = int(b[0:16], 2)
+        self.dst_port = int(b[16:32], 2)
+        self.len = int(b[32:48], 2)
+        self.cksum = int(b[48:64], 2)
 
     def __str__(self) -> str:
         return f"UDP (src_port {self.src_port}, dst_port {self.dst_port}, " + \
@@ -120,14 +127,62 @@ def traceroute(sendsock: util.Socket, recvsock: util.Socket, ip: str) \
     """
 
     # TODO Add your implementation
-    # for ttl in range(1, TRACEROUTE_MAX_TTL+1):
-    #     util.print_result([], ttl)
-    # return []
-    sendsock.set_ttl(30)
-    sendsock.sendto("Potato".encode(), (ip, TRACEROUTE_PORT_NUMBER))
-    if recvsock.recv_select():
-        buf, address = recvsock.recvfrom()
-        print(f"Packet bytes: {buf.hex()}")
+    def parse_buf(buf):
+        # 内容过短
+        if (len(buf) < 20): return None, None
+        ipv4 = IPv4(buf)
+        if len(buf) < ipv4.header_len: return None, None
+        # IP Option不为空
+        if (ipv4.header_len > 20): return None, None 
+
+        if ipv4.proto == 1:
+            icmp = ICMP(buf[ipv4.header_len:])
+            return ipv4, icmp
+        elif ipv4.proto == 17:
+            # 不能是UDP
+            udp = UDP(buf[ipv4.header_len:])
+            return None, None
+
+    def invalid_packet_helper(ipv4, proto):
+        # B4,B5不知道错误的具体样子，所以就没写
+        if isinstance(proto, ICMP):
+            # invalid ICMP Type
+            if proto.type != 3 and proto.type != 11:
+                return True
+            # invalid ICMP Code
+            if proto.type == 11 and proto.code != 0:
+                return True
+            
+    def get_recv_packet():
+        if recvsock.recv_select():
+            buf, address = recvsock.recvfrom()
+            ipv4, proto = parse_buf(buf)
+            if ipv4 is None: return None
+            if invalid_packet_helper(ipv4, proto): return None
+            return address[0]
+        return None
+            
+
+
+    ttl_results = []
+    for ttl in range(1, TRACEROUTE_MAX_TTL+1):
+        return_ip = []
+        sendsock.set_ttl(ttl)
+        for _ in range(PROBE_ATTEMPT_COUNT):
+            sendsock.sendto("Potato".encode(), (ip, TRACEROUTE_PORT_NUMBER))
+            recv_ip = get_recv_packet()
+            if recv_ip is None: continue
+            return_ip.append(recv_ip)
+            # 到达目标ip
+            if recv_ip == ip:
+                return_ip = list(dict.fromkeys(return_ip))
+                util.print_result(return_ip, ttl)
+                return ttl_results.append(return_ip)
+
+        return_ip = list(dict.fromkeys(return_ip))
+        util.print_result(return_ip, ttl)
+        ttl_results.append(return_ip)
+    return ttl_results
 
 
 if __name__ == '__main__':
