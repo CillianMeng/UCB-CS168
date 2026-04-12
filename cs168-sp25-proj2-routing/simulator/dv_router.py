@@ -78,7 +78,6 @@ class DVRouter(DVRouterBase):
 
         ##### Begin Stage 1 #####
         self.table[host] = TableEntry(dst=host, port=port, latency=self.ports.get_latency(port), expire_time=FOREVER)
-
         ##### End Stage 1 #####
 
     def handle_data_packet(self, packet, in_port):
@@ -114,6 +113,10 @@ class DVRouter(DVRouterBase):
         """
         
         ##### Begin Stages 3, 6, 7, 8, 10 #####
+        #告知端口p自己可以到dst，和latency
+        for _, entry in self.table.items():
+            for p in self.ports.get_all_ports():
+                self.send_route(p, entry.dst, entry.latency)
 
         ##### End Stages 3, 6, 7, 8, 10 #####
 
