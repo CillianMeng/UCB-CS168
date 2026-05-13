@@ -58,7 +58,7 @@ class DVRouter(DVRouterBase):
         self.table.owner = self
 
         ##### Begin Stage 10A #####
-
+        self.history = {}
         ##### End Stage 10A #####
 
     def add_static_route(self, host, port):
@@ -116,7 +116,30 @@ class DVRouter(DVRouterBase):
         #告知端口p自己可以到dst，和latency
         for _, entry in self.table.items():
             for p in self.ports.get_all_ports():
-                self.send_route(p, entry.dst, entry.latency)
+                if single_port is not None and single_port != p:
+                    continue
+
+                send = False
+                dst = entry.dst
+
+                if self.POISON_REVERSE == True and p == entry.port:
+                    latency = INFINITY
+                    send = True
+
+                elif self.SPLIT_HORIZON == False or p != entry.port:
+                    latency = min(entry.latency, INFINITY)
+                    send = True
+
+                if force == False and p in self.history.keys() and dst in self.history[p].keys() and latency == self.history[p][dst]:
+                    send = False
+                
+                if send:
+                    self.send_route(p, dst, latency)
+                    if p not in self.history.keys():
+                        self.history[p] = {}
+                    self.history[p][dst] = latency
+
+                
 
         ##### End Stages 3, 6, 7, 8, 10 #####
 
@@ -127,7 +150,18 @@ class DVRouter(DVRouterBase):
         """
         
         ##### Begin Stages 5, 9 #####
+        expired_routes = []
+        for dst in self.table.keys():
+            if api.current_time() >= self.table[dst].expire_time:
+                expired_routes.append(dst)
 
+        for route in expired_routes:
+            if self.POISON_EXPIRED == True:
+                self.table[route] = TableEntry(dst=route, port=self.table[route].port, latency=INFINITY, expire_time=api.current_time()+self.ROUTE_TTL)
+                self.log(f"A expired route to {route} is poisoned")
+            else:    
+                self.table.pop(route)
+                self.log(f"A expired route to {route} is deleted")
         ##### End Stages 5, 9 #####
 
     def handle_route_advertisement(self, route_dst, route_latency, port):
@@ -141,7 +175,20 @@ class DVRouter(DVRouterBase):
         """
         
         ##### Begin Stages 4, 10 #####
-
+        port_latency = self.ports.get_latency(port)
+        update_table = False
+        if route_dst not in self.table.keys():
+            update_table = True
+            
+        elif port == self.table[route_dst].port:
+            update_table = True
+        
+        elif route_latency+port_latency < self.table[route_dst].latency:
+            update_table = True
+        
+        if update_table:
+            self.table[route_dst] = TableEntry(dst=route_dst, port=port, latency=route_latency+port_latency, expire_time=api.current_time()+self.ROUTE_TTL)
+            self.send_routes(force=False)
         ##### End Stages 4, 10 #####
 
     def handle_link_up(self, port, latency):
@@ -155,6 +202,8 @@ class DVRouter(DVRouterBase):
         self.ports.add_port(port, latency)
 
         ##### Begin Stage 10B #####
+        if self.handle_link_up:
+            self.send_routes(single_port=port)
 
         ##### End Stage 10B #####
 
@@ -168,7 +217,28 @@ class DVRouter(DVRouterBase):
         self.ports.remove_port(port)
 
         ##### Begin Stage 10B #####
+        if self.POISON_ON_LINK_DOWN:
+            self.add_poison_to_port(port)
 
+        else:
+            self.del_port_route(port)
         ##### End Stage 10B #####
 
     # Feel free to add any helper methods!
+
+    def add_poison_to_port(self, port):
+        for h in self.table.keys():
+            p = self.table[h].port
+            expire_time = self.table[h].expire_time
+            if port == p:
+                self.table[h] = TableEntry(dst=h, port=p, latency=INFINITY, expire_time=expire_time)
+            self.send_routes(force=False)
+
+    def del_port_route(self, port):
+        del_route = []
+        for h in self.table.keys():
+            if self.table[h].port == port:
+                del_route.append(h)
+
+        for h in del_route:
+            self.table.pop(h)
